@@ -37,6 +37,22 @@ const publicMsg = (m, forHost) => {
 
 const publicDeal = (d) => (d && d.endsAt > Date.now() ? { code: d.code, percent: d.percent, endsAt: d.endsAt, scope: d.scope } : null);
 
+// Tiny public status used by the storefront homepage banner.
+export function liveStatus() {
+  const live = Lives.current();
+  if (!live) return { live: false };
+  const products = productCache.get(live.id)?.list || [];
+  const active = products.find((p) => p.id === live.active_product_id) || products[0];
+  return {
+    live: true,
+    id: live.id,
+    title: live.title,
+    viewers: hub ? hub.viewerCount(live.id) : 0,
+    path: `${config.proxyPrefix}/${live.id}`,
+    image: active?.image || null,
+  };
+}
+
 export function shareUrl(live) {
   return live.redirect_gid ? `${config.storeUrl}/live/${live.id}` : `${config.storeUrl}${config.proxyPrefix}/${live.id}?ref=share`;
 }
