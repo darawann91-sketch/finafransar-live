@@ -287,3 +287,14 @@ body.ffl-info { overflow: auto; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* tap-to-like heart at the finger position */
+.tap-heart { position: fixed; z-index: 9; width: 86px; height: 86px; margin: -43px 0 0 -43px; pointer-events: none; color: var(--red); filter: drop-shadow(0 6px 18px rgba(255,45,85,.45)); animation: tapHeart .9s cubic-bezier(.2,1.2,.4,1) forwards; }
+.tap-heart svg { width: 100%; height: 100%; }
+@keyframes tapHeart {
+  0% { transform: scale(.2) rotate(var(--rot, 0deg)); opacity: 0; }
+  20% { transform: scale(1.15) rotate(var(--rot, 0deg)); opacity: 1; }
+  45% { transform: scale(.95) rotate(var(--rot, 0deg)); opacity: 1; }
+  100% { transform: translateY(-120px) scale(1.25) rotate(var(--rot, 0deg)); opacity: 0; }
+}
+.stage { touch-action: manipulation; -webkit-user-select: none; user-select: none; }

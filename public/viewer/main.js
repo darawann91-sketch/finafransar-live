@@ -573,6 +573,29 @@ function like() {
   spawnHeart();
   navigator.vibrate?.(8);
 }
+// Tap anywhere on the video to like (TikTok-style): a heart pops where the finger is.
+let lastGuestToast = 0;
+function tapHeart(x, y) {
+  const el = h('span', { class: 'tap-heart', html: I.heartFill });
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.setProperty('--rot', `${Math.round(-20 + Math.random() * 40)}deg`);
+  el.addEventListener('animationend', () => el.remove());
+  document.body.append(el);
+}
+document.addEventListener('pointerup', (e) => {
+  if (S.state !== 'live' || openSheet) return;
+  const t = e.target;
+  if (!t.closest?.('.stage')) return;
+  if (t.closest('button, a, input, .product-card, .deal, .msg, .msg-menu, .overlay, .topbar, .rail, .chat, .composer, .cart-pill, .sound-btn')) return;
+  if (S.me.guest) {
+    if (Date.now() - lastGuestToast > 4000) { lastGuestToast = Date.now(); toast('Skapa ett gratis konto för att gilla 💛'); }
+    return;
+  }
+  tapHeart(e.clientX, e.clientY);
+  like();
+});
+
 setInterval(() => {
   if (likeQueue > 0 && socket) {
     socket.send({ t: 'like', n: Math.min(likeQueue, 20) });

@@ -260,6 +260,8 @@ function renderStudio() {
         h('div', { class: 'st-left' },
           h('div', { class: 'preview' },
             h('video', { id: 'preview', playsinline: true, autoplay: true, muted: true, class: 'mirror' }),
+            h('div', { class: 'pv-hearts', id: 'pv-hearts', 'aria-hidden': 'true' }),
+            h('div', { class: 'pv-chat', id: 'pv-chat', 'aria-live': 'polite' }),
             h('div', { class: 'ph', id: 'ph' }, ended ? 'Liven är avslutad.' : 'Kameran är av. Tryck ”Aktivera kamera” – webbläsaren frågar om kamera och mikrofon.')
           ),
           ended ? null : h('div', { class: 'dev-row' },
@@ -652,13 +654,20 @@ function connectHostSocket() {
     ST.reports = m.reports || 0;
     $('#m-viewers').textContent = num(m.viewers);
     $('#m-likes').textContent = num(m.likes);
+    put($('#pv-chat'));
+    m.messages.slice(-5).forEach(previewChat);
     if (ST.tab !== 'chat') renderChat();
     else renderChat();
     renderTabs();
   });
   s.on('viewers', (m) => { ST.viewers = m.n; $('#m-viewers') && ($('#m-viewers').textContent = num(m.n)); });
-  s.on('likes', (m) => { ST.likes = m.total; $('#m-likes') && ($('#m-likes').textContent = num(m.total)); });
+  s.on('likes', (m) => {
+    ST.likes = m.total;
+    $('#m-likes') && ($('#m-likes').textContent = num(m.total));
+    for (let i = 0; i < Math.min(m.burst || 1, 8); i++) setTimeout(previewHeart, i * 120);
+  });
   s.on('chat', (m) => {
+    previewChat(m.m);
     ST.messages.push(m.m);
     if (ST.messages.length > 200) ST.messages.shift();
     const list = $('#chat-list');
@@ -675,6 +684,26 @@ function connectHostSocket() {
   s.on('reports', (m) => { ST.reports = m.count; loadReports(); });
   s.on('products', (m) => { ST.products = m.products; });
   s.on('deal', (m) => { ST.deal = m.deal; renderDeal(); });
+}
+
+// Comments + hearts on top of the host's own camera preview (like TikTok),
+// so the host can read the chat without leaving the camera view.
+function previewChat(m) {
+  const box = $('#pv-chat');
+  if (!box || !m) return;
+  const el = h('div', { class: `pv-msg${m.role === 'host' ? ' host' : ''}` }, h('b', {}, m.name), ' ', m.text);
+  box.append(el);
+  while (box.childElementCount > 6) box.firstElementChild.remove();
+}
+const HEART_COLORS = ['#ff2d55', '#ff6f91', '#c9a961', '#ffffff'];
+function previewHeart() {
+  const layer = $('#pv-hearts');
+  if (!layer || layer.childElementCount > 30) return;
+  const el = h('span', { class: 'pv-heart' }, '❤');
+  el.style.color = HEART_COLORS[(Math.random() * HEART_COLORS.length) | 0];
+  el.style.setProperty('--dx', `${Math.round(-40 + Math.random() * 50)}px`);
+  el.addEventListener('animationend', () => el.remove());
+  layer.append(el);
 }
 
 // ---------------------------------------------------------------------------

@@ -155,12 +155,20 @@ await step('Kund A: likes i realtid (host ser dem)', async () => {
   for (let i = 0; i < 5; i++) await a.click('#like-btn');
   await host.waitForFunction(() => Number(document.querySelector('#m-likes')?.textContent.replace(/\s/g, '')) >= 5, null, { timeout: 5000 });
 });
+await step('Kund A: trycker på videon = gilla (hjärta vid fingret)', async () => {
+  const before = Number((await a.textContent('#likes')).replace(/\D/g, '')) || 0;
+  await a.mouse.click(120, 260);
+  await a.waitForSelector('.tap-heart', { timeout: 2000 });
+  const after = Number((await a.textContent('#likes')).replace(/\D/g, '')) || 0;
+  expect(after === before + 1, `likes ${before} -> ${after}`);
+});
 await step('Kund A: chattar – host ser meddelandet', async () => {
   await a.fill('#chat-input', 'vilken böj?');
   await a.press('#chat-input', 'Enter');
   await a.waitForSelector('#feed .msg:has-text("vilken böj?")');
   await host.click('#tabs button:has-text("Chatt")');
   await host.waitForSelector('#chat-list .cmsg:has-text("vilken böj?")');
+  await host.waitForSelector('#pv-chat .pv-msg:has-text("vilken böj?")');
 });
 await step('Chat-spam begränsas (rate limit)', async () => {
   for (let i = 0; i < 6; i++) { await a.fill('#chat-input', `spam ${i}`); await a.press('#chat-input', 'Enter'); }
