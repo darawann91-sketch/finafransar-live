@@ -515,7 +515,7 @@ export function dismissReport(live, messageId) {
 // live with their own camera. Only the host can invite, remove and choose who
 // is shown big; a guest can only accept, decline or leave.
 // ---------------------------------------------------------------------------
-export const STAGE_MAX = 3;
+export const STAGE_MAX = 6;
 const INVITE_TTL_MS = 60_000;
 const STAGE_GRACE_MS = 20_000;
 const stages = new Map(); // liveId -> { main: 'host' | identity, guests: Map<sub, guest> }
