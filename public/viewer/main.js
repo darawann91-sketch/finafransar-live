@@ -32,6 +32,28 @@ const S = {
 let player = null;
 let socket = null;
 
+// Embedded as the full-screen takeover on the storefront homepage.
+const EMBED = (() => { try { return window.top !== window.self; } catch { return true; } })();
+function go(url) {
+  try { if (EMBED) { window.top.location.href = url; return; } } catch {}
+  location.href = url;
+}
+function closeEmbed() {
+  try { window.parent.postMessage({ type: 'ffl-live-close' }, location.origin); } catch {}
+}
+if (EMBED) {
+  document.documentElement.classList.add('ffl-embed');
+  // Links (login, product pages, store) must open in the full window, not inside the frame.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (!a || a.target === '_blank') return;
+    e.preventDefault();
+    if (a.getAttribute('href') === boot.storeUrl) return closeEmbed();
+    go(a.href);
+  }, true);
+}
+
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -335,7 +357,7 @@ function fillProduct() {
 
 async function addToCart(p, v, btn) {
   if (S.me.guest) {
-    location.href = loginUrl(p.id);
+    go(loginUrl(p.id));
     return;
   }
   btn.disabled = true;
@@ -438,7 +460,7 @@ async function changeLine(item, qty) {
 function checkout() {
   track('checkout', { value: (S.cart?.total_price || 0) / 100 });
   const q = S.deal && !S.dealApplied ? `?discount=${encodeURIComponent(S.deal.code)}` : '';
-  location.href = `/checkout${q}`;
+  go(`/checkout${q}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -476,7 +498,7 @@ function renderDeal() {
 
 async function applyDeal() {
   if (!S.deal) return;
-  if (S.me.guest) return (location.href = loginUrl());
+  if (S.me.guest) return go(loginUrl());
   try {
     await Cart.applyDiscount(S.deal.code);
     S.dealApplied = true;
