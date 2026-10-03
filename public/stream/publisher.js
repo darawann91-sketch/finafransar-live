@@ -1,6 +1,7 @@
 // Host-side streaming adapters (Live Studio).
 //   const pub = await createPublisher(creds, mediaStream, { signal, vendor, onState })
 //   pub.replaceVideoTrack(track); pub.replaceAudioTrack(track); pub.setMicEnabled(bool); pub.stop()
+//   opts.layout (optional): guests on stage are rendered through it; pub.startAudio() after a tap.
 
 export async function createPublisher(creds, stream, opts) {
   if (creds.provider === 'livekit') return livekitPublisher(creds, stream, opts);
@@ -9,10 +10,29 @@ export async function createPublisher(creds, stream, opts) {
 }
 
 // ---- LiveKit ----------------------------------------------------------------
-async function livekitPublisher(creds, stream, { vendor, onState }) {
+async function livekitPublisher(creds, stream, { vendor, onState, layout }) {
   const LK = await import(vendor.livekit);
-  const room = new LK.Room({ dynacast: true });
+  const room = new LK.Room({ dynacast: true, adaptiveStream: true });
+  // Guests on stage: the host sees (layout) and hears them.
+  const audioEls = new Map();
   room
+    .on(LK.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      if (track.kind === 'video') {
+        layout?.set(participant.identity, { video: { attach: (el) => { track.attach(el); el.play?.().catch(() => {}); }, detach: (el) => track.detach(el) }, name: participant.name || '' });
+      } else if (track.kind === 'audio') {
+        const el = track.attach();
+        el.style.display = 'none';
+        document.body.append(el);
+        audioEls.set(track.sid, el);
+        el.play?.().catch(() => {});
+      }
+    })
+    .on(LK.RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
+      if (track.kind === 'video') layout?.set(participant.identity, { video: null });
+      const el = audioEls.get(track.sid);
+      if (el) { track.detach(el); el.remove(); audioEls.delete(track.sid); }
+    })
+    .on(LK.RoomEvent.ParticipantDisconnected, (p) => layout?.remove(p.identity))
     .on(LK.RoomEvent.Reconnecting, () => onState('reconnecting'))
     .on(LK.RoomEvent.Reconnected, () => onState('live'))
     .on(LK.RoomEvent.Disconnected, () => onState('disconnected'));
@@ -62,7 +82,14 @@ async function livekitPublisher(creds, stream, { vendor, onState }) {
       if (!pubs.audio?.track) return;
       on ? await pubs.audio.track.unmute() : await pubs.audio.track.mute();
     },
+    async startAudio() {
+      try { await room.startAudio(); } catch {}
+      for (const el of audioEls.values()) el.play?.().catch(() => {});
+    },
     stop() {
+      for (const el of audioEls.values()) el.remove();
+      audioEls.clear();
+      layout?.clear();
       room.disconnect(false);
     },
   };
