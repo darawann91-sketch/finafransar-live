@@ -93,6 +93,13 @@ Vid start skapar servern automatiskt:
 5. Dela länken från Studio (`finafransar.com/live/<ID>`).
 6. Lägg gärna en länk till `finafransar.com/live` i menyn eller i en banner. Det ändrar jag inte åt dig.
 
+### 5. Ta upp gäster i liven (kamera)
+- I **Chatt**: tryck på en kommentar och välj **🎥 Bjud upp i liven**. Bara inloggade kunder kan bjudas upp. Bara du som host kan bjuda in; tittare kan aldrig bjuda in sig själva eller någon annan.
+- Kunden får en inbjudan (gäller i 60 s) och trycker **GÅ MED I LIVEN**. Telefonen frågar om kamera och mikrofon.
+- Under förhandsvisningen i Studio finns kortet **I LIVEN**. Där väljer du vem som är **stor bild** (**⤢ Gör stor**, eller tryck på en liten ruta) och tar ner en gäst med **Ta ner**. Alla tittare ser samma layout som du.
+- Gästen kan själv trycka **Lämna liven** när hon vill. Max 3 gäster samtidigt. Blockerar du någon tas hon också ner.
+- Gäster kräver LiveKit. I utvecklingsläget (dev mesh) syns gästens kamera bara på hennes egen telefon.
+
 **Testa själv innan första riktiga live:** starta en live, öppna länken på din telefon i inkognito (då är du gäst), se att den låses efter 10 s, skapa konto, gör ett testköp (t.ex. med en 100 %-rabattkod) och kontrollera att köpet syns i **Statistik**.
 
 ---
