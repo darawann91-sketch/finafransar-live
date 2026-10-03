@@ -1075,9 +1075,13 @@ function layoutTiles() {
   const rail = $('.rail');
   const n = g?.childElementCount || 0;
   if (!n || !rail) return;
+  // Up to 3 small cameras in one column, 4–6 in two columns.
+  const cols = n > 3 ? 2 : 1;
+  const rows = Math.ceil(n / cols);
+  g.dataset.cols = String(cols);
   const avail = rail.getBoundingClientRect().top - g.getBoundingClientRect().top - 10;
-  const perTile = (avail - 8 * (n - 1)) / n;
-  const w = Math.max(56, Math.min(innerWidth * 0.26, 150, (perTile * 3) / 4));
+  const perTile = (avail - 8 * (rows - 1)) / rows;
+  const w = Math.max(56, Math.min(innerWidth * (cols === 2 ? 0.2 : 0.26), 150, (perTile * 3) / 4));
   g.style.setProperty('--gtile-w', `${Math.floor(w)}px`);
 }
 

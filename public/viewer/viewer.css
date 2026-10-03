@@ -327,3 +327,5 @@ body.ffl-info { overflow: auto; }
 .invite-ico { font-size: 44px; margin-bottom: 6px; }
 .overlay .invite-note { font-size: 13px; margin-top: -12px; }
 .invite-timer { margin-top: 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gtiles[data-cols='2'] { display: grid; grid-template-columns: repeat(2, var(--gtile-w, 72px)); gap: 6px; }
+.app[data-guests]:not([data-guests='0']) .sound-btn { left: 14px; transform: none; }
