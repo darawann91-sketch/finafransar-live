@@ -307,6 +307,95 @@ await step('Viewer kan inte manipulera host-funktioner via websocket', async () 
   expect((await a.textContent('#product-card')).includes('Volymfransar'), 'product changed by viewer');
 });
 
+// ---------------------------------------------------------------- STAGE (guests on camera)
+const cCtx = await browser.newContext({ ...iphone, permissions: [] });
+const c = await cCtx.newPage();
+watch(c, 'viewerC');
+const stageApiAs = (page, action) => page.evaluate(async (action) => {
+  const boot = JSON.parse(document.getElementById('ffl-boot').textContent);
+  const r = await fetch(`${boot.api}/api/stream/stage`, { method: 'POST', headers: { Authorization: `Bearer ${boot.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+  return { status: r.status, body: await r.json() };
+}, action);
+const inviteSara = async () => {
+  await host.click('#tabs button:has-text("Chatt")');
+  const row = host.locator('#chat-list .cmsg:has-text("vilken böj?")').first();
+  await row.click();
+  await row.locator('button:has-text("Bjud upp i liven")').click();
+  await host.waitForSelector('#stage-card:has-text("Inbjuden")');
+};
+
+await step('Scen: tittare kan inte gå upp utan inbjudan / kan inte bjuda in', async () => {
+  const r = await stageApiAs(a, 'join');
+  expect(r.status === 403 && r.body.error === 'not_invited', `join without invite: ${r.status} ${r.body.error}`);
+  // A viewer's token can never reach the host-only invite API (also blocked by CORS in the browser).
+  const tok = await a.evaluate(() => JSON.parse(document.getElementById('ffl-boot').textContent).token);
+  const inv = (await fetch(`${APP}/api/studio/lives/${liveId}/stage/invite`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` }, body: '{"sub":"c_1"}' })).status;
+  expect(inv === 401 || inv === 403, `viewer could call invite: ${inv}`);
+});
+await step('Scen: ny tittare (Kund C) ansluter', async () => {
+  await c.goto(`${STORE}/customer_authentication/login?return_to=${encodeURIComponent('/apps/live')}`);
+  await c.fill('input[name=email]', 'ella@example.com');
+  await c.click('#login-submit');
+  await c.waitForURL(/\/apps\/live/);
+  await videoPlaying(c);
+});
+await step('Host: bjuder upp Kund A från chatten → hon får inbjudan', async () => {
+  await inviteSara();
+  await a.waitForSelector('#invite.show:has-text("Du är inbjuden")', { timeout: 5000 });
+  expect(!(await c.$('#invite.show')), 'other viewer got the invite');
+  await a.screenshot({ path: `${SHOTS}/12-stage-invite.png` });
+});
+await step('Kund A: GÅ MED → kameran startar, hon är i liven', async () => {
+  await aCtx.grantPermissions(['camera', 'microphone'], { origin: STORE });
+  await a.click('#invite-yes');
+  await a.waitForSelector('.app[data-onstage="on"]', { timeout: 8000 });
+  await a.waitForFunction(() => [...document.querySelectorAll('#gtiles .gtile video')].some((v) => v.readyState >= 2 && v.videoWidth > 0), null, { timeout: 8000 });
+  await host.waitForSelector('#stage-card .stage-row:has-text("I liven")', { timeout: 5000 });
+  await host.waitForSelector('#pv-tiles .gtile', { timeout: 5000 });
+  await c.waitForSelector('#gtiles .gtile', { timeout: 5000 });
+  await a.screenshot({ path: `${SHOTS}/13-stage-guest-on.png` });
+});
+await step('Host: väljer att gästen blir STOR – alla får samma layout', async () => {
+  await host.click('#stage-card .stage-row:has-text("I liven") button:has-text("Gör stor")');
+  await host.waitForSelector('#stage-card .stage-row:has-text("stor bild"):has-text("Moa")', { timeout: 5000 });
+  // Guest's own phone: her camera is now the big picture, the host is a small tile.
+  await a.waitForFunction(() => document.querySelector('#video').classList.contains('mirror') && document.querySelector('#video').dataset.camera.startsWith('stage-'), null, { timeout: 5000 });
+  await a.waitForSelector('#gtiles .gtile', { timeout: 5000 });
+  await host.waitForTimeout(400);
+  await host.locator('.preview').screenshot({ path: `${SHOTS}/14-stage-host-guest-big.png` });
+  await a.screenshot({ path: `${SHOTS}/15-stage-guest-big-own-phone.png` });
+  await host.click('#stage-card button:has-text("Gör stor")'); // host back to big
+  await host.waitForSelector('#stage-card .stage-row:has-text("Du (host)"):has-text("Stor bild")', { timeout: 5000 });
+  await a.waitForFunction(() => !document.querySelector('#video').classList.contains('mirror'), null, { timeout: 5000 });
+});
+await step('Kund A: lämnar liven själv → tittar vidare som vanligt', async () => {
+  await a.click('#sc-leave');
+  await a.waitForSelector('.app:not([data-onstage="on"])');
+  await videoPlaying(a);
+  await host.waitForFunction(() => !document.querySelector('#stage-card').textContent.includes('I liven ·') && !document.querySelector('#pv-tiles .gtile'), null, { timeout: 5000 });
+  await c.waitForFunction(() => !document.querySelector('#gtiles .gtile'), null, { timeout: 5000 });
+});
+await step('Host: bjuder in igen och TAR NER gästen', async () => {
+  await inviteSara();
+  await a.waitForSelector('#invite.show', { timeout: 5000 });
+  await a.click('#invite-yes');
+  await a.waitForSelector('.app[data-onstage="on"]', { timeout: 8000 });
+  await host.waitForSelector('#stage-card .stage-row:has-text("I liven")', { timeout: 5000 });
+  await host.click('#stage-card button:has-text("Ta ner")');
+  await a.waitForSelector('.app:not([data-onstage="on"])', { timeout: 5000 });
+  await a.waitForSelector('.toast:has-text("tog ner dig")', { timeout: 3000 });
+  await videoPlaying(a);
+  const r = await stageApiAs(a, 'join');
+  expect(r.status === 403, `rejoin after removal allowed: ${r.status}`);
+});
+await step('Kund A: tackar nej till en inbjudan', async () => {
+  await inviteSara();
+  await a.waitForSelector('#invite.show', { timeout: 5000 });
+  await a.click('#invite-no');
+  await host.waitForFunction(() => !document.querySelector('#stage-card').textContent.includes('Inbjuden'), null, { timeout: 5000 });
+  await cCtx.close();
+});
+
 // ---------------------------------------------------------------- responsiveness screenshots
 await step('Responsivitet: iPhone SE, iPhone 15 Pro Max, Galaxy S9+, iPad, desktop', async () => {
   const sizes = [
