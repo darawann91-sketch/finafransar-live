@@ -1,0 +1,26 @@
+{
+  "name": "finafransar-live",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Finafransar LIVE – mobile-first live shopping för Shopify (finafransar.com)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "postinstall": "node scripts/vendor.js",
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "dev:store": "node --disable-warning=ExperimentalWarning dev/storefront-mock.js",
+    "create-admin": "node --disable-warning=ExperimentalWarning scripts/create-admin.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/unit.test.js",
+    "test:e2e": "node --disable-warning=ExperimentalWarning test/e2e.mjs"
+  },
+  "dependencies": {
+    "livekit-client": "^2.15.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.55.0"
+  }
+}

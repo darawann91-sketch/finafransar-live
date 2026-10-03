@@ -1,0 +1,50 @@
+# Render Blueprint – Finafransar LIVE (testfas på gratisplanen)
+# OBS: Render Free somnar efter 15 min och raderar data vid omstart.
+# Byt plan till "starter" + lägg till disk innan riktiga lives.
+services:
+  - type: web
+    name: finafransar-live
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DATA_DIR
+        value: ./data
+      - key: STORE_URL
+        value: https://www.finafransar.com
+      - key: SHOPIFY_SHOP
+        value: zrhvuy-pz.myshopify.com
+      - key: STREAM_PROVIDER
+        value: livekit
+      - key: STREAM_MAX_HEIGHT
+        value: "1080"
+      - key: APP_SECRET
+        generateValue: true
+      # Fylls i i Render-panelen (Environment):
+      - key: PUBLIC_URL
+        sync: false
+      - key: SHOPIFY_MODE
+        sync: false
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
+        sync: false
+      - key: LIVEKIT_URL
+        value: wss://finafransar-com-9sgm5zqy.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

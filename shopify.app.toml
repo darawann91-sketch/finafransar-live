@@ -1,0 +1,18 @@
+# Konfiguration för appen i Shopify Dev Dashboard (dev.shopify.com).
+# Antingen: fyll i samma värden manuellt i Dev Dashboard -> Versions -> Create version,
+# eller: `shopify app deploy` med Shopify CLI.
+client_id = "FYLL_I_CLIENT_ID"
+name = "Finafransar LIVE"
+application_url = "https://live.finafransar.com/admin"
+embedded = false
+
+[access_scopes]
+scopes = "read_products,read_customers,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_orders,write_app_proxy"
+
+[app_proxy]
+url = "https://live.finafransar.com/proxy"
+prefix = "apps"
+subpath = "live"
+
+[auth]
+redirect_urls = ["https://live.finafransar.com/admin"]
