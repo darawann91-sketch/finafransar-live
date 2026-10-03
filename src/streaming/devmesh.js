@@ -17,6 +17,10 @@ export function createDevMeshProvider(hubRef, streamCfg) {
     viewerCredentials(live) {
       return { provider: 'devmesh', room: live.stream_room, iceServers: [] };
     },
+    // Dev mesh is one-to-many from the host only: guests can't be relayed.
+    stageCredentials(live) {
+      return { provider: 'devmesh', room: live.stream_room, unsupported: true };
+    },
     async removeViewer(live, identity) {
       hubRef.current?.meshDropViewer(live.id, identity);
     },

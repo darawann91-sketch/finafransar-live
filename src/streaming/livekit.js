@@ -46,7 +46,8 @@ export function createLiveKitProvider(cfg, streamCfg) {
         url,
         room: live.stream_room,
         token: token(`host-${host.id}`, host.name, {
-          room: live.stream_room, roomJoin: true, canPublish: true, canSubscribe: false, canPublishData: false,
+          // canSubscribe: the host sees and hears guests brought up on stage.
+          room: live.stream_room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: false,
         }, 6 * 3600, { role: 'host' }),
         publish: publishSettings(streamCfg),
       };
@@ -60,6 +61,19 @@ export function createLiveKitProvider(cfg, streamCfg) {
         token: token(viewer.identity, viewer.name || 'Tittare', {
           room: live.stream_room, roomJoin: true, canPublish: false, canSubscribe: true, canPublishData: false, hidden: true,
         }, guest ? 60 : 8 * 3600),
+      };
+    },
+
+    // A viewer the host invited up on stage: publishes camera/mic, sees everyone.
+    stageCredentials(live, guest) {
+      return {
+        provider: 'livekit',
+        url,
+        room: live.stream_room,
+        token: token(guest.identity, guest.name || 'Gäst', {
+          room: live.stream_room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: false,
+          canPublishSources: ['camera', 'microphone'],
+        }, 4 * 3600, { role: 'guest' }),
       };
     },
 

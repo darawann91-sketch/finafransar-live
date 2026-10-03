@@ -7,7 +7,8 @@
 //   createRoom(live): Promise<roomName>
 //   hostCredentials(live, host): { provider, ...whatever the client adapter needs }
 //   viewerCredentials(live, viewer{identity,name}, { guest }): { provider, ... }
-//   removeViewer(live, identity): Promise<void>   // used to enforce the 10 s preview
+//   stageCredentials(live, guest{identity,name}): { provider, ... }  // viewer invited on stage
+//   removeViewer(live, identity): Promise<void>   // 10 s preview + taking guests off stage
 //   endRoom(live): Promise<void>
 // }
 import { config } from '../config.js';
