@@ -125,6 +125,8 @@ export function snapshot(liveId, conn) {
       mutedUntil: conn.role === 'viewer' ? Mutes.until(liveId, conn.sub) : 0,
     },
     reports: forHost ? Reports.open(liveId).length : undefined,
+    stage: stageView(liveId, forHost),
+    myStage: forHost ? undefined : myStage(liveId, conn.sub),
   };
 }
 
@@ -141,6 +143,8 @@ export async function onJoin(conn) {
       return false;
     }
     conn.sessionId = ViewerSessions.open(live.id, conn.sub, conn.guest, conn.ref);
+    const g = stages.get(live.id)?.guests.get(conn.sub);
+    if (g) clearTimeout(g.graceTimer);
   } else {
     // host/admin websocket: must own the live (admins may join any)
     if (conn.role !== 'admin' && live.host_id !== conn.hostId) return false;
@@ -151,6 +155,16 @@ export async function onJoin(conn) {
 
 export function onLeave(conn) {
   if (conn.sessionId) ViewerSessions.close(conn.sessionId);
+  // A guest on stage who closed the app: drop them if they don't come back.
+  const g = conn.role === 'viewer' ? stages.get(conn.liveId)?.guests.get(conn.sub) : null;
+  if (g && !hub.connsForSub(conn.liveId, conn.sub).length) {
+    clearTimeout(g.graceTimer);
+    g.graceTimer = setTimeout(() => {
+      const live = Lives.get(conn.liveId);
+      if (live && stages.get(live.id)?.guests.get(g.sub) === g && !hub.connsForSub(live.id, g.sub).length) dropGuest(live, g, 'gone');
+    }, STAGE_GRACE_MS);
+    g.graceTimer.unref?.();
+  }
 }
 
 export function onViewerCount(liveId, n) {
@@ -362,6 +376,7 @@ export async function endLive(live) {
   if (live.deal) await endDeal(live).catch(() => {});
   Lives.update(live.id, { status: 'ended', ended_at: Date.now() });
   Events.add(live.id, 'live_end');
+  clearStage(live.id);
   hub.broadcast(live.id, { t: 'live_status', status: 'ended' });
   ViewerSessions.closeAllForLive(live.id);
   streaming.endRoom(live).catch((e) => console.error('endRoom', e.message));
@@ -476,6 +491,8 @@ export function blockAuthor(live, messageId, host, reason) {
   const m = messageOf(live, messageId);
   if (m.role !== 'viewer') throw new HttpError(400, 'cannot_moderate_host');
   Blocks.add(m.sub, m.name, cleanText(reason || '', 200), host.id);
+  const onStage = stages.get(live.id)?.guests.get(m.sub);
+  if (onStage) dropGuest(live, onStage, 'removed');
   const ids = Messages.idsBySub(live.id, m.sub);
   Messages.deleteAllBySub(live.id, m.sub, host.id);
   ids.forEach((id) => Reports.resolve(id));
@@ -491,6 +508,144 @@ export function dismissReport(live, messageId) {
   const m = messageOf(live, messageId);
   Reports.resolve(m.id);
   hub.toHosts(live.id, { t: 'reports', count: Reports.open(live.id).length });
+}
+
+// ---------------------------------------------------------------------------
+// Stage ("bjud upp i liven"): the host brings logged-in viewers up into the
+// live with their own camera. Only the host can invite, remove and choose who
+// is shown big; a guest can only accept, decline or leave.
+// ---------------------------------------------------------------------------
+export const STAGE_MAX = 3;
+const INVITE_TTL_MS = 60_000;
+const STAGE_GRACE_MS = 20_000;
+const stages = new Map(); // liveId -> { main: 'host' | identity, guests: Map<sub, guest> }
+
+function stageOf(liveId) {
+  let st = stages.get(liveId);
+  if (!st) stages.set(liveId, (st = { main: 'host', guests: new Map() }));
+  return st;
+}
+
+export function stageView(liveId, forHost) {
+  const st = stages.get(liveId);
+  if (!st) return { main: 'host', guests: [], max: STAGE_MAX };
+  const guests = [...st.guests.values()]
+    .filter((g) => forHost || g.status === 'on')
+    .map((g) => (forHost ? { sub: g.sub, identity: g.identity, name: g.name, status: g.status } : { identity: g.identity, name: g.name }));
+  return { main: st.main, guests, max: STAGE_MAX };
+}
+
+function myStage(liveId, sub) {
+  const g = stages.get(liveId)?.guests.get(sub);
+  if (!g) return null;
+  return { status: g.status, host: hostName(liveId), expiresAt: g.status === 'invited' ? g.invitedAt + INVITE_TTL_MS : null };
+}
+
+function hostName(liveId) {
+  const live = Lives.get(liveId);
+  return (live && Hosts.byId(live.host_id)?.name) || 'Finafransar';
+}
+
+function broadcastStage(liveId) {
+  hub.broadcast(liveId, { t: 'stage', stage: stageView(liveId, false) }, { filter: (c) => c.role === 'viewer' });
+  hub.toHosts(liveId, { t: 'stage', stage: stageView(liveId, true) });
+}
+
+function toSub(liveId, sub, msg) {
+  for (const c of hub.connsForSub(liveId, sub)) if (c.role === 'viewer') hub.send(c, msg);
+}
+
+function dropGuest(live, g, reason) {
+  const st = stages.get(live.id);
+  if (!st || st.guests.get(g.sub) !== g) return;
+  clearTimeout(g.timer);
+  clearTimeout(g.graceTimer);
+  st.guests.delete(g.sub);
+  if (st.main === g.identity) st.main = 'host';
+  if (g.status === 'on') streaming.removeViewer(live, g.identity).catch((e) => console.error('stage remove', e.message));
+  if (reason === 'removed') toSub(live.id, g.sub, { t: 'stage_removed' });
+  if (reason === 'cancelled' || reason === 'expired') toSub(live.id, g.sub, { t: 'stage_cancel' });
+  if (reason !== 'removed' && reason !== 'cancelled') hub.toHosts(live.id, { t: 'stage_event', kind: reason, name: g.name });
+  broadcastStage(live.id);
+}
+
+function clearStage(liveId) {
+  const st = stages.get(liveId);
+  if (!st) return;
+  for (const g of st.guests.values()) {
+    clearTimeout(g.timer);
+    clearTimeout(g.graceTimer);
+  }
+  stages.delete(liveId);
+}
+
+export function stageInvite(live, sub) {
+  if (live.status !== 'live') throw new HttpError(409, 'not_live');
+  if (typeof sub !== 'string' || !/^c_\d{1,20}$/.test(sub)) throw new HttpError(400, 'invalid_viewer');
+  if (Blocks.is(sub)) throw new HttpError(409, 'viewer_blocked');
+  const conns = hub.connsForSub(live.id, sub).filter((c) => c.role === 'viewer' && !c.guest);
+  if (!conns.length) throw new HttpError(409, 'viewer_offline');
+  const st = stageOf(live.id);
+  let g = st.guests.get(sub);
+  if (g?.status === 'on') throw new HttpError(409, 'already_on_stage');
+  if (!g && st.guests.size >= STAGE_MAX) throw new HttpError(409, 'stage_full');
+  if (!g) g = { sub, name: conns[0].name || 'Kund', identity: `stage-${randomId(10)}` };
+  g.status = 'invited';
+  g.invitedAt = Date.now();
+  clearTimeout(g.timer);
+  const guest = g;
+  g.timer = setTimeout(() => guest.status === 'invited' && dropGuest(live, guest, 'expired'), INVITE_TTL_MS);
+  g.timer.unref?.();
+  st.guests.set(sub, g);
+  toSub(live.id, sub, { t: 'stage_invite', host: hostName(live.id), expiresAt: g.invitedAt + INVITE_TTL_MS });
+  Events.add(live.id, 'stage_invite', sub);
+  broadcastStage(live.id);
+  return stageView(live.id, true);
+}
+
+export function stageRemove(live, sub) {
+  const g = stages.get(live.id)?.guests.get(String(sub));
+  if (g) dropGuest(live, g, g.status === 'invited' ? 'cancelled' : 'removed');
+  return stageView(live.id, true);
+}
+
+export function stageSetMain(live, target) {
+  if (live.status !== 'live') throw new HttpError(409, 'not_live');
+  const st = stageOf(live.id);
+  if (target !== 'host' && ![...st.guests.values()].some((g) => g.identity === target && g.status === 'on')) throw new HttpError(400, 'not_on_stage');
+  st.main = target;
+  broadcastStage(live.id);
+  return stageView(live.id, true);
+}
+
+// Called by the invited viewer (authenticated with their viewer token).
+export function stageGuestAction(liveId, viewer, action) {
+  const live = Lives.get(liveId);
+  if (!live || live.status !== 'live') throw new HttpError(409, 'not_live');
+  if (viewer.guest) throw new HttpError(403, 'login_required');
+  const g = stages.get(liveId)?.guests.get(viewer.sub);
+  if (action === 'join') {
+    if (!g) throw new HttpError(403, 'not_invited');
+    if (Blocks.is(viewer.sub)) throw new HttpError(403, 'blocked');
+    clearTimeout(g.timer);
+    clearTimeout(g.graceTimer);
+    if (g.status !== 'on') {
+      g.status = 'on';
+      hub.toHosts(liveId, { t: 'stage_event', kind: 'joined', name: g.name });
+      Events.add(liveId, 'stage_join', viewer.sub);
+      broadcastStage(liveId);
+    }
+    return { stream: { ...streaming.stageCredentials(live, { identity: g.identity, name: g.name }), identity: g.identity }, stage: stageView(liveId, false) };
+  }
+  if (action === 'decline') {
+    if (g && g.status === 'invited') dropGuest(live, g, 'declined');
+    return { ok: true };
+  }
+  if (action === 'leave') {
+    if (g) dropGuest(live, g, g.status === 'on' ? 'left' : 'declined');
+    return { ok: true };
+  }
+  throw new HttpError(400, 'invalid_action');
 }
 
 // ---------------------------------------------------------------------------
