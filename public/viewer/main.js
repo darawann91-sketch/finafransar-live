@@ -3,6 +3,7 @@ import { I } from './icons.js';
 import { Cart, cartDiscountCodes } from './cart.js';
 import { createSocket } from '../stream/socket.js';
 import { createPlayer } from '../stream/player.js';
+import { createLayout } from '../stream/layout.js';
 
 const boot = JSON.parse(document.getElementById('ffl-boot').textContent);
 const app = document.getElementById('app');
@@ -31,6 +32,9 @@ const S = {
 };
 let player = null;
 let socket = null;
+let layout = null; // big camera + small guest tiles
+// Stage (host invited me up into the live): null | 'invited' | 'joining' | 'on'
+const ME_STAGE = { status: null, stream: null, expiresAt: 0, timer: null, micOn: true };
 
 // Embedded as the full-screen takeover on the storefront homepage.
 const EMBED = (() => { try { return window.top !== window.self; } catch { return true; } })();
@@ -52,7 +56,6 @@ if (EMBED) {
     go(a.href);
   }, true);
 }
-
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -115,6 +118,13 @@ function render() {
       h('button', { class: 'cart-pill', id: 'cart-pill', onclick: () => openCart() }, h('span', { html: I.cart }), h('span', { id: 'cart-pill-text' }, '')),
       h('button', { class: 'sound-btn', id: 'sound-btn', onclick: enableSound }, h('span', { html: I.muted }), 'Tryck för ljud'),
       h('div', { class: 'hearts', id: 'hearts', 'aria-hidden': 'true' }),
+      h('div', { class: 'gtiles', id: 'gtiles', 'aria-label': 'Gäster i liven' }),
+      h('div', { class: 'stage-ctrl', id: 'stage-ctrl' },
+        h('span', { class: 'on-air' }, 'DU ÄR I LIVEN'),
+        h('button', { class: 'sc-btn', id: 'sc-mic', 'aria-label': 'Mikrofon av/på', onclick: toggleStageMic }, '🎙️'),
+        h('button', { class: 'sc-btn sc-leave', id: 'sc-leave', onclick: () => leaveStage(true) }, 'Lämna liven')
+      ),
+      inviteOverlay(),
       h('nav', { class: 'rail' },
         h('button', { class: 'rail-btn like', id: 'like-btn', 'aria-label': 'Gilla', onclick: like }, h('span', { class: 'ico', html: I.heartFill }), h('span', { id: 'likes' }, '0')),
         h('button', { class: 'rail-btn opt-chat', 'aria-label': 'Visa/dölj chatt', onclick: toggleChat }, h('span', { class: 'ico', html: I.chat }), h('span', {}, 'Chatt')),
@@ -163,6 +173,21 @@ function composer() {
   const input = h('input', { id: 'chat-input', type: 'text', maxlength: 200, placeholder: 'Skriv ett meddelande…', enterkeyhint: 'send', autocomplete: 'off', 'aria-label': 'Skriv ett meddelande' });
   const form = h('form', { class: 'field', onsubmit: (e) => { e.preventDefault(); sendChat(input); } }, input, h('button', { class: 'send', type: 'submit', 'aria-label': 'Skicka', html: I.send }));
   return h('div', { class: 'composer' }, form, h('button', { class: 'shop', onclick: openShop, 'aria-label': 'Shoppa' }, h('span', { html: I.bag }), h('span', { class: 'n', id: 'shop-n' }, '0')));
+}
+
+function inviteOverlay() {
+  return h('div', { class: 'overlay invite', id: 'invite', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'invite-h' },
+    h('div', { class: 'card' },
+      h('div', { class: 'brand' }, 'FINAFRANSAR LIVE'),
+      h('div', { class: 'invite-ico', 'aria-hidden': 'true' }, '🎥'),
+      h('h2', { id: 'invite-h' }, 'Du är inbjuden till liven!'),
+      h('p', { id: 'invite-text' }, ''),
+      h('p', { class: 'invite-note' }, 'Din kamera och mikrofon syns och hörs för alla som tittar. Du kan lämna när du vill.'),
+      h('button', { class: 'btn btn-light', id: 'invite-yes', onclick: acceptInvite }, 'GÅ MED I LIVEN'),
+      h('button', { class: 'btn btn-ghost', id: 'invite-no', style: 'color:#fff', onclick: declineInvite }, 'Nej tack'),
+      h('div', { class: 'invite-timer', id: 'invite-timer' }, '')
+    )
+  );
 }
 
 function gateOverlay() {
@@ -686,7 +711,7 @@ function setVideoState(st) {
 }
 
 async function startVideo() {
-  if (S.state !== 'live') return;
+  if (S.state !== 'live' || ME_STAGE.status === 'on' || ME_STAGE.status === 'joining') return;
   if (S.me.guest && ls.get(LS_PREVIEW)) return showGate();
   try {
     const res = await fetch(`${boot.api}/api/stream/viewer`, { method: 'POST', headers: { Authorization: `Bearer ${boot.token}` } });
@@ -698,7 +723,9 @@ async function startVideo() {
       vendor: boot.vendor,
       signal: socket,
       onState: setVideoState,
+      layout,
     });
+    if (S.soundOn) player.startAudio().catch(() => {});
   } catch (e) {
     console.warn('video', e);
     setTimeout(startVideo, 4000);
@@ -749,6 +776,10 @@ async function enableSound() {
 }
 
 function showEnded() {
+  hideInvite();
+  stopLocalCamera();
+  ME_STAGE.status = null;
+  app.dataset.onstage = '';
   S.state = 'ended';
   app.dataset.state = 'ended';
   freezeFrame();
@@ -765,6 +796,143 @@ function showEnded() {
     )
   );
   $('#ended').classList.add('show');
+}
+
+// ---------------------------------------------------------------------------
+// stage: the host can invite me up into the live (I can never invite anyone)
+// ---------------------------------------------------------------------------
+let stageView = { main: 'host', guests: [] };
+function applyStage(st) {
+  if (!st) return;
+  stageView = st;
+  const ids = ['host', ...st.guests.map((g) => g.identity)];
+  layout?.setStage(st.main, ids);
+  for (const g of st.guests) if (layout && !layout.has(g.identity)) layout.set(g.identity, { name: g.name });
+  app.dataset.guests = String(st.guests.length);
+  requestAnimationFrame(layoutTiles);
+}
+
+function showInvite({ host, expiresAt, rejoin }) {
+  if (S.me.guest || S.state !== 'live' || ME_STAGE.status === 'on' || ME_STAGE.status === 'joining') return;
+  ME_STAGE.status = 'invited';
+  ME_STAGE.rejoin = !!rejoin;
+  ME_STAGE.expiresAt = expiresAt || Date.now() + 60_000;
+  closeSheets();
+  $('#invite-h').textContent = rejoin ? 'Gå tillbaka upp i liven?' : 'Du är inbjuden till liven!';
+  $('#invite-text').textContent = rejoin ? 'Du var med i liven när sidan laddades om.' : `${host || 'Hosten'} vill ta upp dig i liven med kamera.`;
+  $('#invite-yes').disabled = false;
+  $('#invite-yes').textContent = 'GÅ MED I LIVEN';
+  $('#invite').classList.add('show');
+  navigator.vibrate?.([30, 60, 30]);
+  clearInterval(ME_STAGE.timer);
+  const tick = () => {
+    const left = Math.max(0, Math.round((ME_STAGE.expiresAt - Date.now() - S.serverOffset) / 1000));
+    $('#invite-timer').textContent = rejoin ? '' : `Inbjudan gäller i ${left} s`;
+    if (!rejoin && left <= 0 && ME_STAGE.status === 'invited') { hideInvite(); ME_STAGE.status = null; }
+  };
+  tick();
+  ME_STAGE.timer = setInterval(tick, 1000);
+}
+
+function hideInvite() {
+  clearInterval(ME_STAGE.timer);
+  $('#invite')?.classList.remove('show');
+}
+
+async function stageApi(action) {
+  const res = await fetch(`${boot.api}/api/stream/stage`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${boot.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(body.error || 'stage_failed'), { code: body.error });
+  return body;
+}
+
+function stopLocalCamera() {
+  ME_STAGE.stream?.getTracks().forEach((t) => t.stop());
+  ME_STAGE.stream = null;
+}
+
+async function acceptInvite() {
+  if (ME_STAGE.status !== 'invited') return;
+  const btn = $('#invite-yes');
+  btn.disabled = true;
+  btn.textContent = 'STARTAR KAMERAN…';
+  // Ask for the camera first (needs this tap) – only then tell the server we're coming.
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('no_media');
+    ME_STAGE.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30, max: 30 } },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch {
+    hideInvite();
+    ME_STAGE.status = null;
+    stageApi(ME_STAGE.rejoin ? 'leave' : 'decline').catch(() => {});
+    return toast('Du behöver tillåta kamera och mikrofon för att gå med', 4500);
+  }
+  ME_STAGE.status = 'joining';
+  hideInvite();
+  try {
+    const { stream: creds, stage } = await stageApi('join');
+    if (creds.unsupported) toast('Utvecklingsläge: gästkameran skickas inte ut (kräver LiveKit)', 4000);
+    S.soundOn = true;
+    $('#sound-btn')?.classList.remove('show');
+    player?.disconnect();
+    player = null;
+    player = await createPlayer(creds, $('#video'), {
+      vendor: boot.vendor,
+      signal: socket,
+      onState: setVideoState,
+      layout,
+      publish: ME_STAGE.stream,
+    });
+    player.startAudio().catch(() => {});
+    ME_STAGE.status = 'on';
+    ME_STAGE.micOn = true;
+    app.dataset.onstage = 'on';
+    requestAnimationFrame(layoutTiles);
+    $('#sc-mic').classList.remove('off');
+    applyStage(stage);
+    toast('🔴 Du är i liven!');
+  } catch (e) {
+    console.warn('stage join', e);
+    stopLocalCamera();
+    ME_STAGE.status = null;
+    app.dataset.onstage = '';
+    toast(e.code === 'not_invited' ? 'Inbjudan gäller inte längre' : 'Kunde inte gå med i liven', 4000);
+    startVideo();
+  }
+}
+
+function declineInvite() {
+  hideInvite();
+  ME_STAGE.status = null;
+  // Saying no to "go back up" after a reload means leaving the stage for good.
+  stageApi(ME_STAGE.rejoin ? 'leave' : 'decline').catch(() => {});
+}
+
+async function leaveStage(tellServer) {
+  const was = ME_STAGE.status;
+  ME_STAGE.status = null;
+  app.dataset.onstage = '';
+  if (tellServer) stageApi('leave').catch(() => {});
+  if (was !== 'on' && was !== 'joining') return;
+  player?.disconnect();
+  player = null;
+  stopLocalCamera();
+  if (tellServer) toast('Du har lämnat liven');
+  if (S.state === 'live') startVideo();
+}
+
+async function toggleStageMic() {
+  ME_STAGE.micOn = !ME_STAGE.micOn;
+  ME_STAGE.stream?.getAudioTracks().forEach((t) => (t.enabled = ME_STAGE.micOn));
+  await player?.setMicEnabled?.(ME_STAGE.micOn);
+  $('#sc-mic').classList.toggle('off', !ME_STAGE.micOn);
+  toast(ME_STAGE.micOn ? 'Mikrofonen är på' : 'Mikrofonen är av');
 }
 
 // ---------------------------------------------------------------------------
@@ -804,6 +972,10 @@ function connect() {
     renderShopLists();
     renderDeal();
     if (m.live.status === 'ended') return showEnded();
+    applyStage(m.stage);
+    if (m.myStage && !ME_STAGE.status && (m.myStage.status === 'invited' || m.myStage.status === 'on')) {
+      showInvite({ host: m.myStage.host, expiresAt: m.myStage.expiresAt, rejoin: m.myStage.status === 'on' });
+    }
     if (!player && S.state === 'live') startVideo();
     if (S.openProductId && productById(S.openProductId)) {
       openProduct(S.openProductId);
@@ -857,7 +1029,16 @@ function connect() {
   });
   socket.on('live', (m) => { S.live = m.live; $('#live-title').textContent = m.live.title; });
   socket.on('live_status', (m) => m.status === 'ended' && showEnded());
-  socket.on('preview_over', showGate);
+  socket.on('preview_over', () => ME_STAGE.status !== 'on' && showGate());
+  socket.on('stage', (m) => applyStage(m.stage));
+  socket.on('stage_invite', (m) => showInvite(m));
+  socket.on('stage_cancel', () => {
+    if (ME_STAGE.status === 'invited') { hideInvite(); ME_STAGE.status = null; toast('Inbjudan gick ut'); }
+  });
+  socket.on('stage_removed', () => {
+    hideInvite();
+    if (ME_STAGE.status) { leaveStage(false); toast('Hosten tog ner dig från liven'); }
+  });
   socket.on('muted', (m) => { S.me.mutedUntil = m.until; toast('Du har pausats från chatten en stund'); });
   socket.on('reported', () => toast('Tack! Kommentaren är rapporterad.'));
   socket.on('error', (m) => {
@@ -880,17 +1061,32 @@ function layoutRail() {
   const rail = $('.rail');
   const hearts = $('#hearts');
   if (!bottom || !rail) return;
-  if (matchMedia('(min-width: 960px)').matches) { rail.style.bottom = hearts.style.bottom = ''; return; }
+  if (matchMedia('(min-width: 960px)').matches) { rail.style.bottom = hearts.style.bottom = ''; layoutTiles(); return; }
   const chatH = chat.classList.contains('hidden') ? 0 : chat.offsetHeight + 10;
   const px = bottom.offsetHeight - chatH + 6;
   rail.style.bottom = `${px}px`;
   hearts.style.bottom = `${px + rail.offsetHeight - 40}px`;
+  layoutTiles();
+}
+
+// Guest tiles shrink so the column always ends above the like/shop rail.
+function layoutTiles() {
+  const g = $('#gtiles');
+  const rail = $('.rail');
+  const n = g?.childElementCount || 0;
+  if (!n || !rail) return;
+  const avail = rail.getBoundingClientRect().top - g.getBoundingClientRect().top - 10;
+  const perTile = (avail - 8 * (n - 1)) / n;
+  const w = Math.max(56, Math.min(innerWidth * 0.26, 150, (perTile * 3) / 4));
+  g.style.setProperty('--gtile-w', `${Math.floor(w)}px`);
 }
 
 // ---------------------------------------------------------------------------
 // start
 // ---------------------------------------------------------------------------
 render();
+layout = createLayout({ main: $('#video'), tiles: $('#gtiles') });
+new MutationObserver(layoutTiles).observe($('#gtiles'), { childList: true });
 new ResizeObserver(layoutRail).observe($('.bottom'));
 addEventListener('resize', layoutRail);
 connect();
@@ -904,3 +1100,9 @@ document.addEventListener('visibilitychange', () => {
 });
 // First touch anywhere also unlocks audio-capable playback on iOS.
 document.addEventListener('touchend', () => { const v = $('#video'); if (v?.paused && S.state === 'live') v.play().catch(() => {}); }, { once: true, passive: true });
+// Closing the tab while on stage: tell the server right away (it also drops us after 20 s).
+addEventListener('pagehide', () => {
+  if (ME_STAGE.status === 'on') {
+    fetch(`${boot.api}/api/stream/stage`, { method: 'POST', keepalive: true, headers: { Authorization: `Bearer ${boot.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'leave' }) }).catch(() => {});
+  }
+});
