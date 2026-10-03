@@ -10,6 +10,12 @@ import { isLiveId, isNumericId } from '../lib/sanitize.js';
 import { viewerPage, infoPage } from '../views/pages.js';
 import * as svc from '../services/lives.js';
 
+// The live page may be framed by the storefront itself (homepage takeover).
+const frameHeaders = {
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Content-Security-Policy': `frame-ancestors 'self' ${new URL(config.storeUrl).origin} https://finafransar.com https://www.finafransar.com`,
+};
+
 const nameCache = new Map(); // customerId -> { name, createdAt, at }
 
 async function customerProfile(customerId) {
@@ -109,7 +115,7 @@ export function registerViewerRoutes(router, { trustProxy }) {
       description: live.description || 'Titta live och shoppa direkt i sändningen.',
       image: active?.image || products[0]?.image || null,
       url: svc.shareUrl(live),
-    }), { 'Cache-Control': 'private, no-store' });
+    }), { 'Cache-Control': 'private, no-store', ...frameHeaders });
   };
 
   // GET /apps/live/status  (via App Proxy, same origin as the storefront)
