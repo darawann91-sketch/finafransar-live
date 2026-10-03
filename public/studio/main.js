@@ -32,7 +32,7 @@ const ERR = {
   login_required: 'Logga in igen', forbidden: 'Du har inte behörighet', csrf: 'Sessionen har gått ut – ladda om sidan',
   product_not_in_live: 'Lägg först till produkten i live-produkterna', no_live_products: 'Lägg till live-produkter först (eller välj Hela butiken)',
   invalid_code: 'Koden får bara innehålla A–Z, 0–9, - och _', not_live: 'Liven är inte igång', weak_password: 'Lösenordet måste vara minst 12 tecken',
-  viewer_offline: 'Tittaren är inte kvar i liven', stage_full: 'Scenen är full (max 3 gäster)', already_on_stage: 'Hen är redan i liven',
+  viewer_offline: 'Tittaren är inte kvar i liven', stage_full: 'Liven är full (max 6 gäster)', already_on_stage: 'Hen är redan i liven',
   viewer_blocked: 'Tittaren är blockerad', invalid_viewer: 'Gäster utan konto kan inte bjudas upp', not_on_stage: 'Hen är inte i liven längre',
   email_taken: 'E-posten används redan', shopify_discount_failed: 'Shopify kunde inte skapa rabattkoden', code_taken: 'Koden finns redan – välj en annan',
 };
@@ -685,6 +685,8 @@ function applyStageLayout() {
   for (const g of on) if (!L.has(g.identity)) L.set(g.identity, { name: g.name });
   for (const g of on) L.set(g.identity, { name: g.name });
   L.setStage(st.main, ['host', ...on.map((g) => g.identity)]);
+  const pv = $('.preview');
+  if (pv) pv.dataset.guests = String(on.length);
   placeHostCamera();
 }
 
@@ -710,7 +712,7 @@ function placeHostCamera() {
 function renderStage() {
   const card = $('#stage-card');
   if (!card) return;
-  const st = ST.stage || { main: 'host', guests: [], max: 3 };
+  const st = ST.stage || { main: 'host', guests: [], max: 6 };
   const row = (name, status, btns) => h('div', { class: 'stage-row' }, h('div', { class: 'sr-name' }, h('b', {}, name), h('span', { class: `sr-status ${status.cls}` }, status.text)), h('div', { class: 'sr-acts' }, btns));
   const btn = (label, fn, cls = 'ghost') => h('button', { class: `btn sm ${cls}`, onclick: guard(fn) }, label);
   const rows = [
@@ -724,7 +726,7 @@ function renderStage() {
       : row(g.name, { cls: 'wait', text: 'Inbjuden – väntar på svar…' }, btn('Avbryt', () => removeFromStage(g.sub, g.name)))),
   ];
   put(card,
-    h('h3', {}, `I LIVEN (${st.guests.filter((g) => g.status === 'on').length}/${st.max || 3} GÄSTER)`),
+    h('h3', {}, `I LIVEN (${st.guests.filter((g) => g.status === 'on').length}/${st.max || 6} GÄSTER)`),
     rows,
     st.guests.length ? null : h('p', { class: 'muted', style: 'margin:8px 0 0' }, 'Bjud upp en tittare: öppna Chatt, tryck på en kommentar och välj ”🎥 Bjud upp i liven”. Bara du kan bjuda in.')
   );

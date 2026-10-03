@@ -171,3 +171,6 @@ select.in { appearance: none; }
 .sr-status.on { color: var(--green); }
 .sr-status.big, .sr-status.wait { color: var(--gold); }
 .sr-acts { display: flex; gap: 6px; flex: none; }
+/* 4–6 guests: small cameras in two columns */
+.preview[data-guests='4'] .pv-side, .preview[data-guests='5'] .pv-side, .preview[data-guests='6'] .pv-side { width: 40%; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.preview[data-guests='4'] .pv-side .gtiles, .preview[data-guests='5'] .pv-side .gtiles, .preview[data-guests='6'] .pv-side .gtiles { display: contents; }
