@@ -1,6 +1,7 @@
 // Finafransar LIVE Studio – host/admin app (served on the live app domain).
 import { createSocket } from '../stream/socket.js';
 import { createPublisher } from '../stream/publisher.js';
+import { createLayout } from '../stream/layout.js';
 
 const root = document.getElementById('studio');
 const VENDOR = { livekit: '/static/vendor/livekit-client.esm.mjs' };
@@ -31,6 +32,8 @@ const ERR = {
   login_required: 'Logga in igen', forbidden: 'Du har inte behörighet', csrf: 'Sessionen har gått ut – ladda om sidan',
   product_not_in_live: 'Lägg först till produkten i live-produkterna', no_live_products: 'Lägg till live-produkter först (eller välj Hela butiken)',
   invalid_code: 'Koden får bara innehålla A–Z, 0–9, - och _', not_live: 'Liven är inte igång', weak_password: 'Lösenordet måste vara minst 12 tecken',
+  viewer_offline: 'Tittaren är inte kvar i liven', stage_full: 'Scenen är full (max 3 gäster)', already_on_stage: 'Hen är redan i liven',
+  viewer_blocked: 'Tittaren är blockerad', invalid_viewer: 'Gäster utan konto kan inte bjudas upp', not_on_stage: 'Hen är inte i liven längre',
   email_taken: 'E-posten används redan', shopify_discount_failed: 'Shopify kunde inte skapa rabattkoden', code_taken: 'Koden finns redan – välj en annan',
 };
 let toastT;
@@ -217,6 +220,7 @@ const ST = {};
 function teardownStudio() {
   ST.socket?.close();
   ST.publisher?.stop();
+  ST.layout?.clear();
   ST.stream?.getTracks().forEach((t) => t.stop());
   clearInterval(ST.clock);
   clearInterval(ST.statsTimer);
@@ -259,7 +263,9 @@ function renderStudio() {
       h('div', { class: 'st-grid' },
         h('div', { class: 'st-left' },
           h('div', { class: 'preview' },
-            h('video', { id: 'preview', playsinline: true, autoplay: true, muted: true, class: 'mirror' }),
+            h('video', { id: 'preview', playsinline: true, autoplay: true, muted: true, class: 'mirror', onclick: () => ST.stage?.main !== 'host' && setStageMain('host') }),
+            h('video', { id: 'pv-main', playsinline: true, autoplay: true, muted: true }),
+            h('div', { class: 'pv-side', id: 'pv-side' }, h('div', { class: 'gtiles', id: 'pv-tiles' })),
             h('div', { class: 'pv-hearts', id: 'pv-hearts', 'aria-hidden': 'true' }),
             h('div', { class: 'pv-chat', id: 'pv-chat', 'aria-live': 'polite' }),
             h('div', { class: 'ph', id: 'ph' }, ended ? 'Liven är avslutad.' : 'Kameran är av. Tryck ”Aktivera kamera” – webbläsaren frågar om kamera och mikrofon.')
@@ -275,6 +281,7 @@ function renderStudio() {
               ? h('button', { class: 'btn red block go-live', id: 'end-btn', onclick: endLiveClick }, '■ AVSLUTA LIVE')
               : h('button', { class: 'btn primary block go-live', id: 'go-live', onclick: guard(goLive) }, '🔴 STARTA LIVE')
           ),
+          isLive ? h('div', { class: 'card stage-card', id: 'stage-card', style: 'margin-top:12px' }) : null,
           h('div', { class: 'card', style: 'margin-top:12px' },
             h('h3', {}, 'DELNINGSLÄNK'),
             h('div', { class: 'share-box' }, h('input', { class: 'in', readonly: true, value: L.shareUrl, id: 'share-url' }), h('button', { class: 'btn', onclick: () => { navigator.clipboard?.writeText(L.shareUrl); toast('Länken är kopierad'); } }, 'Kopiera')),
@@ -299,6 +306,8 @@ function renderStudio() {
   renderProducts();
   renderChat();
   renderDeal();
+  bindStageLayout();
+  renderStage();
   if (isLive) startClock();
 }
 
@@ -416,6 +425,7 @@ function chatRow(m) {
   const acts = h('div', { class: 'acts' },
     act(m.id === ST.pinnedId ? 'Lossa' : '📌 Fäst', () => api('POST', `/api/studio/lives/${ST.id}/pin`, { messageId: m.id === ST.pinnedId ? null : m.id })),
     act('🗑 Radera', () => api('POST', `/api/studio/lives/${ST.id}/messages/${m.id}/delete`)),
+    m.role === 'viewer' && /^c_/.test(m.sub || '') && ST.live?.status === 'live' ? act(stageStatusOf(m.sub) ? '🎥 Bjuden' : '🎥 Bjud upp i liven', () => inviteToStage(m.sub, m.name), 'gold') : null,
     m.role === 'viewer' ? act('🔇 Muta 10 min', async () => { await api('POST', `/api/studio/lives/${ST.id}/messages/${m.id}/mute`, { minutes: 10 }); toast(`${m.name} är mutad i 10 min`); }) : null,
     m.role === 'viewer' ? act('⛔ Blockera', async () => { await api('POST', `/api/studio/lives/${ST.id}/messages/${m.id}/block`, { reason: 'Blockerad från studion' }); toast(`${m.name} är blockerad`); }, 'red') : null
   );
@@ -597,6 +607,7 @@ async function publish(creds) {
   ST.publisher = await createPublisher(creds, ST.stream, {
     signal: ST.socket,
     vendor: VENDOR,
+    layout: stageLayout(),
     onState: (s) => {
       if (s === 'reconnecting') toast('Sändningen återansluter…');
       if (s === 'disconnected' && ST.live?.status === 'live') toast('Sändningen bröts – försöker igen', 4000);
@@ -637,6 +648,115 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// stage: bring viewers up into the live (only the host can invite)
+// ---------------------------------------------------------------------------
+function stageLayout() {
+  if (!ST.layout) {
+    ST.layout = createLayout({ main: $('#pv-main'), tiles: $('#pv-tiles'), external: ['host'], onTileClick: (id) => setStageMain(id), onMain: placeHostCamera });
+  }
+  return ST.layout;
+}
+
+function bindStageLayout() {
+  if (ST.layout) ST.layout.rebind({ main: $('#pv-main'), tiles: $('#pv-tiles') });
+  applyStageLayout();
+}
+
+const stageStatusOf = (sub) => ST.stage?.guests.find((g) => g.sub === sub)?.status || null;
+
+function applyStage(stage) {
+  if (!stage) return;
+  ST.stage = stage;
+  applyStageLayout();
+  renderStage();
+  // refresh invite labels in the chat
+  const list = $('#chat-list');
+  if (list) {
+    const near = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    put(list, ST.messages.map(chatRow));
+    if (near) list.scrollTop = list.scrollHeight;
+  }
+}
+
+function applyStageLayout() {
+  const st = ST.stage || { main: 'host', guests: [] };
+  const on = st.guests.filter((g) => g.status === 'on');
+  const L = stageLayout();
+  for (const g of on) if (!L.has(g.identity)) L.set(g.identity, { name: g.name });
+  for (const g of on) L.set(g.identity, { name: g.name });
+  L.setStage(st.main, ['host', ...on.map((g) => g.identity)]);
+  placeHostCamera();
+}
+
+// The big picture follows what is actually showing (a guest whose camera hasn't
+// connected yet falls back to the host until it arrives).
+function placeHostCamera() {
+  const pv = $('.preview');
+  const me = $('#preview');
+  if (pv && me && ST.layout) {
+    const guestMain = ST.layout.mainId && ST.layout.mainId !== 'host';
+    pv.classList.toggle('guest-main', !!guestMain);
+    // When a guest is big, my own camera moves into the small-tiles column (first).
+    const side = $('#pv-side');
+    const want = guestMain ? side : pv;
+    if (me.parentElement !== want) {
+      if (guestMain) side.prepend(me);
+      else pv.prepend(me);
+      me.play?.().catch(() => {});
+    }
+  }
+}
+
+function renderStage() {
+  const card = $('#stage-card');
+  if (!card) return;
+  const st = ST.stage || { main: 'host', guests: [], max: 3 };
+  const row = (name, status, btns) => h('div', { class: 'stage-row' }, h('div', { class: 'sr-name' }, h('b', {}, name), h('span', { class: `sr-status ${status.cls}` }, status.text)), h('div', { class: 'sr-acts' }, btns));
+  const btn = (label, fn, cls = 'ghost') => h('button', { class: `btn sm ${cls}`, onclick: guard(fn) }, label);
+  const rows = [
+    row('Du (host)', st.main === 'host' ? { cls: 'big', text: 'Stor bild' } : { cls: '', text: 'Liten bild' },
+      st.main !== 'host' ? btn('⤢ Gör stor', () => setStageMain('host')) : null),
+    ...st.guests.map((g) => g.status === 'on'
+      ? row(g.name, st.main === g.identity ? { cls: 'big', text: 'I liven · stor bild' } : { cls: 'on', text: 'I liven' }, [
+        st.main !== g.identity ? btn('⤢ Gör stor', () => setStageMain(g.identity)) : null,
+        btn('Ta ner', () => removeFromStage(g.sub, g.name), 'red'),
+      ])
+      : row(g.name, { cls: 'wait', text: 'Inbjuden – väntar på svar…' }, btn('Avbryt', () => removeFromStage(g.sub, g.name)))),
+  ];
+  put(card,
+    h('h3', {}, `I LIVEN (${st.guests.filter((g) => g.status === 'on').length}/${st.max || 3} GÄSTER)`),
+    rows,
+    st.guests.length ? null : h('p', { class: 'muted', style: 'margin:8px 0 0' }, 'Bjud upp en tittare: öppna Chatt, tryck på en kommentar och välj ”🎥 Bjud upp i liven”. Bara du kan bjuda in.')
+  );
+}
+
+async function inviteToStage(sub, name) {
+  if (stageStatusOf(sub)) return toast(`${name} är redan inbjuden`);
+  const { stage } = await api('POST', `/api/studio/lives/${ST.id}/stage/invite`, { sub });
+  applyStage(stage);
+  toast(`Inbjudan skickad till ${name}`);
+}
+
+async function removeFromStage(sub, name) {
+  const { stage } = await api('POST', `/api/studio/lives/${ST.id}/stage/remove`, { sub });
+  applyStage(stage);
+  toast(`${name} är nertagen`);
+}
+
+async function setStageMain(target) {
+  if (!ST.live || ST.live.status !== 'live') return;
+  try {
+    const { stage } = await api('POST', `/api/studio/lives/${ST.id}/stage/main`, { target });
+    applyStage(stage);
+  } catch (e) {
+    toast(ERR[e.code] || e.message);
+  }
+}
+
+// Browsers only play the guests' audio after a tap in the studio.
+document.addEventListener('click', () => ST.publisher?.startAudio?.(), { capture: true });
+
+// ---------------------------------------------------------------------------
 // host websocket
 // ---------------------------------------------------------------------------
 function connectHostSocket() {
@@ -652,6 +772,7 @@ function connectHostSocket() {
     ST.messages = m.messages;
     ST.pinnedId = m.pinned?.id || null;
     ST.reports = m.reports || 0;
+    applyStage(m.stage);
     $('#m-viewers').textContent = num(m.viewers);
     $('#m-likes').textContent = num(m.likes);
     put($('#pv-chat'));
@@ -684,6 +805,11 @@ function connectHostSocket() {
   s.on('reports', (m) => { ST.reports = m.count; loadReports(); });
   s.on('products', (m) => { ST.products = m.products; });
   s.on('deal', (m) => { ST.deal = m.deal; renderDeal(); });
+  s.on('stage', (m) => applyStage(m.stage));
+  s.on('stage_event', (m) => {
+    const t = { joined: `🎥 ${m.name} är nu i liven`, declined: `${m.name} tackade nej`, left: `${m.name} lämnade liven`, expired: `Inbjudan till ${m.name} gick ut`, gone: `${m.name} tappade anslutningen` }[m.kind];
+    if (t) toast(t, 3500);
+  });
 }
 
 // Comments + hearts on top of the host's own camera preview (like TikTok),
