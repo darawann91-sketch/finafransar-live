@@ -112,6 +112,11 @@ export function registerViewerRoutes(router, { trustProxy }) {
     }), { 'Cache-Control': 'private, no-store' });
   };
 
+  // GET /apps/live/status  (via App Proxy, same origin as the storefront)
+  router.get('/proxy/status', (req, res, params, url) => {
+    if (!verifyAppProxy(url.searchParams) && !(!config.isProd && process.env.DEV_ALLOW_UNSIGNED === '1')) throw new HttpError(401, 'invalid_proxy_signature');
+    sendJson(res, 200, svc.liveStatus(), { 'Cache-Control': 'no-store' });
+  });
   router.get('/proxy', (req, res, params, url) => handleProxy(req, res, {}, url));
   router.get('/proxy/:liveId', (req, res, params, url) => handleProxy(req, res, params, url));
 
