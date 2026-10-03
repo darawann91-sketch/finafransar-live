@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { Lives, Events } from '../db.js';
 import { shopify, verifyAppProxy } from '../shopify/index.js';
 import { signJwt, verifyJwt, randomId } from '../lib/crypto.js';
-import { sendHtml, sendJson, HttpError, clientIp } from '../lib/http.js';
+import { sendHtml, sendJson, HttpError, clientIp, readJson } from '../lib/http.js';
 import { isLiveId, isNumericId } from '../lib/sanitize.js';
 import { viewerPage, infoPage } from '../views/pages.js';
 import * as svc from '../services/lives.js';
@@ -125,6 +125,17 @@ export function registerViewerRoutes(router, { trustProxy }) {
   });
   router.get('/proxy', (req, res, params, url) => handleProxy(req, res, {}, url));
   router.get('/proxy/:liveId', (req, res, params, url) => handleProxy(req, res, params, url));
+
+  // Invited viewer accepts / declines / leaves the stage. Inviting is host-only
+  // (studio API); a viewer token can never invite anyone.
+  router.post('/api/stream/stage', async (req, res) => {
+    const auth = String(req.headers.authorization || '');
+    const claims = verifyJwt(auth.startsWith('Bearer ') ? auth.slice(7) : '', config.appSecret);
+    if (!claims || claims.typ !== 'viewer') throw new HttpError(401, 'invalid_token');
+    const { action } = await readJson(req).catch(() => ({}));
+    if (!['join', 'decline', 'leave'].includes(action)) throw new HttpError(400, 'invalid_action');
+    sendJson(res, 200, svc.stageGuestAction(claims.live, { sub: claims.sub, name: claims.name, guest: claims.guest }, action));
+  });
 
   router.post('/api/stream/viewer', async (req, res) => {
     const auth = String(req.headers.authorization || '');

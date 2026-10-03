@@ -159,6 +159,19 @@ export function registerStudioRoutes(router, { trustProxy }) {
     sendJson(res, 200, { ok: true });
   });
 
+  // ---- stage: bring viewers up into the live ---------------------------------
+  router.post('/api/studio/lives/:id/stage/:action', async (req, res, { id, action }) => {
+    const host = requireHost(req);
+    const live = liveFor(id, host);
+    const body = await readJson(req).catch(() => ({}));
+    switch (action) {
+      case 'invite': return sendJson(res, 200, { stage: svc.stageInvite(live, body.sub) });
+      case 'remove': return sendJson(res, 200, { stage: svc.stageRemove(live, body.sub) });
+      case 'main': return sendJson(res, 200, { stage: svc.stageSetMain(live, String(body.target || 'host')) });
+      default: throw new HttpError(404, 'unknown_action');
+    }
+  });
+
   router.get('/api/studio/lives/:id/reports', (req, res, { id }) => {
     const host = requireHost(req);
     const live = liveFor(id, host);
