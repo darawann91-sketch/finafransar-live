@@ -36,12 +36,32 @@ export function logout(req, res) {
   setCookie(res, COOKIE, '', { secure: config.isProd, maxAge: 0 });
 }
 
-export function currentSession(req) {
+// Studio sessions come from the cookie (Live Studio) or, for the community web
+// app/app ("go live" without a second login), from "Authorization: Bearer <sid>".
+// A bearer token is never sent automatically by the browser, so CSRF/origin
+// checks only apply to the cookie.
+function sessionId(req) {
+  const m = /^Bearer\s+([A-Za-z0-9_-]{20,100})$/.exec(String(req.headers.authorization || ''));
+  if (m) return { sid: m[1], via: 'bearer' };
   const sid = parseCookies(req)[COOKIE];
-  if (!sid) return null;
-  const s = Sessions.get(sha256(sid));
+  return sid ? { sid, via: 'cookie' } : null;
+}
+
+export function currentSession(req) {
+  const k = sessionId(req);
+  if (!k) return null;
+  const s = Sessions.get(sha256(k.sid));
   if (!s || !s.active) return null;
-  return { csrf: s.csrf, host: { id: s.host_id, email: s.email, name: s.name, role: s.role } };
+  return { csrf: s.csrf, via: k.via, host: { id: s.host_id, email: s.email, name: s.name, role: s.role } };
+}
+
+// Session for a creator signed in through the community (see routes/sso.js).
+export function createBearerSession(req, host, ip) {
+  const sid = randomToken(32);
+  const csrf = randomToken(24);
+  Sessions.create({ idHash: sha256(sid), hostId: host.id, csrf, expiresAt: Date.now() + SESSION_TTL_MS, ip, ua: String(req.headers['user-agent'] || '').slice(0, 200) });
+  Hosts.touchLogin(host.id);
+  return { sid, csrf };
 }
 
 // Guard for studio/admin API routes.
@@ -49,6 +69,12 @@ export function requireHost(req, { roles = ['admin', 'host'], mutating = req.met
   const s = currentSession(req);
   if (!s) throw new HttpError(401, 'login_required');
   if (!roles.includes(s.host.role)) throw new HttpError(403, 'forbidden');
+  if (s.via === 'bearer') {
+    // From the community app: going live, chat and products. Live deals (real
+    // discount codes) stay in Live Studio, and only for admins there.
+    if (s.host.role !== 'admin' && /\/deal(?:$|[/?])/.test(String(req.url || ''))) throw new HttpError(403, 'use_studio', 'Live-deals startas i Live Studio.');
+    return s.host;
+  }
   if (mutating) {
     const token = req.headers['x-csrf-token'];
     if (!token || !safeEqual(token, s.csrf)) throw new HttpError(403, 'csrf');

@@ -11,6 +11,7 @@ import * as svc from './services/lives.js';
 import { registerViewerRoutes } from './routes/viewer.js';
 import { registerStudioRoutes } from './routes/studio.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
+import { registerSsoRoutes } from './routes/sso.js';
 
 assertProductionConfig();
 bootstrapAdmin();
@@ -20,6 +21,7 @@ const router = new Router();
 registerViewerRoutes(router, { trustProxy });
 registerStudioRoutes(router, { trustProxy });
 registerWebhookRoutes(router);
+registerSsoRoutes(router, { trustProxy });
 router.get('/healthz', (req, res) => sendJson(res, 200, { ok: true, provider: config.streaming.provider, shopify: shopify.mode }));
 
 const statics = serveStatic(new URL('../public', import.meta.url).pathname, '/static/');
@@ -32,13 +34,16 @@ try {
 } catch {}
 
 function applyCors(req, res, pathname) {
-  if (!pathname.startsWith('/api/stream/')) return false;
+  // /api/stream: viewers on the store. /api/sso + /api/studio: creators going live
+  // from the community web app (bearer token, never cookies).
+  const studio = pathname.startsWith('/api/sso/') || pathname.startsWith('/api/studio/');
+  if (!pathname.startsWith('/api/stream/') && !studio) return false;
   const origin = req.headers.origin;
   if (origin && corsOrigins.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', studio ? 'GET, POST, PUT, PATCH, DELETE, OPTIONS' : 'POST, OPTIONS');
     res.setHeader('Access-Control-Max-Age', '600');
   }
   if (req.method === 'OPTIONS') {

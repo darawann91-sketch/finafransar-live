@@ -26,6 +26,8 @@ export const config = {
   // PUBLIC: the Shopify storefront (viewer pages are served on this origin via App Proxy).
   storeUrl: env('STORE_URL', 'https://www.finafransar.com').replace(/\/$/, ''),
   // Extra origins allowed to open the websocket (comma separated).
+  // Finafransar PRIVILEGE (community/web app): redeems one-time "go live" codes.
+  privilegeUrl: env('PRIVILEGE_URL', 'https://finafransar-privilege.onrender.com').replace(/\/$/, ''),
   extraOrigins: env('EXTRA_ORIGINS', '').split(',').map((s) => s.trim()).filter(Boolean),
   // App proxy prefix as configured in Shopify (prefix + subpath).
   proxyPrefix: env('APP_PROXY_PREFIX', '/apps/live'),
