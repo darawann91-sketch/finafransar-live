@@ -3,7 +3,9 @@
 // server-to-server (single use, 60 s) and open a Studio session for that member.
 // Members become hosts automatically (role "host": their own lives only).
 import { config } from '../config.js';
-import { Hosts } from '../db.js';
+import { Hosts, Lives } from '../db.js';
+import { streaming } from '../streaming/index.js';
+import { randomId } from '../lib/crypto.js';
 import { hashPassword, randomToken } from '../lib/crypto.js';
 import { readJson, sendJson, HttpError, clientIp } from '../lib/http.js';
 import { RateLimiter } from '../lib/ratelimit.js';
@@ -11,6 +13,7 @@ import { cleanText, isEmail } from '../lib/sanitize.js';
 import { createBearerSession, publicHost } from '../auth.js';
 
 const limiter = new RateLimiter({ capacity: 10, refillPerSec: 10 / 600 });
+const previewLimiter = new RateLimiter({ capacity: 30, refillPerSec: 30 / 600 });
 
 async function redeem(code) {
   const ctl = new AbortController();
@@ -42,5 +45,16 @@ export function registerSsoRoutes(router, { trustProxy }) {
     }
     const s = createBearerSession(req, host, ip);
     sendJson(res, 200, { sid: s.sid, host: publicHost(host), provider: config.streaming.provider, ws: config.publicUrl.replace(/^http/, 'ws') + '/ws' });
+  });
+
+  // Muted video of a live inside the community feed (like TikTok). Subscribe only,
+  // hidden participant, 60 s to join. Watching with sound, chat and shopping
+  // happens on the live page as before (with its own rules for visitors).
+  router.get('/api/stream/preview/:liveId', (req, res, { liveId }) => {
+    if (!previewLimiter.take(clientIp(req, trustProxy))) throw new HttpError(429, 'too_many_requests');
+    const live = Lives.get(String(liveId));
+    if (!live || live.status !== 'live') throw new HttpError(404, 'not_live');
+    const identity = `feed.${randomId(8)}`;
+    sendJson(res, 200, { ...streaming.viewerCredentials(live, { identity, name: 'Flödet' }, { guest: true }), identity }, { 'Cache-Control': 'no-store' });
   });
 }
