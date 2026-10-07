@@ -143,6 +143,7 @@ export async function onJoin(conn) {
       return false;
     }
     conn.sessionId = ViewerSessions.open(live.id, conn.sub, conn.guest, conn.ref);
+    announceJoin(live.id, conn);
     const g = stages.get(live.id)?.guests.get(conn.sub);
     if (g) clearTimeout(g.graceTimer);
   } else {
@@ -151,6 +152,28 @@ export async function onJoin(conn) {
   }
   await liveProducts(live.id);
   return true;
+}
+
+// "Anna gick med" (like TikTok): shown in the chat for everyone, to the host and on
+// the live post in the feed. Signed-in viewers only, once per person per 2 minutes.
+const joinSeen = new Map(); // liveId -> Map(sub -> ms)
+const joinLog = new Map(); // liveId -> [{ name, at }]
+function announceJoin(liveId, conn) {
+  if (conn.guest || !conn.name) return;
+  let seen = joinSeen.get(liveId);
+  if (!seen) { seen = new Map(); joinSeen.set(liveId, seen); }
+  const now = Date.now();
+  if (now - (seen.get(conn.sub) || 0) < 120e3) return;
+  seen.set(conn.sub, now);
+  if (seen.size > 5000) seen.clear();
+  const name = String(conn.name).slice(0, 40);
+  const log = joinLog.get(liveId) || [];
+  log.push({ name, at: now });
+  joinLog.set(liveId, log.slice(-20));
+  hub.broadcast(liveId, { t: 'joined', name });
+}
+export function recentJoins(liveId, since = 0) {
+  return (joinLog.get(liveId) || []).filter((j) => j.at > since);
 }
 
 export function onLeave(conn) {
