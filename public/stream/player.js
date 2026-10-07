@@ -34,9 +34,10 @@ async function safePlay(video) {
 // Handles the host plus any guests on stage. With `layout` every camera is
 // routed through the layout engine (big + small tiles); with `publish`
 // (a MediaStream) this client is itself a guest on stage and sends its camera.
-async function livekitPlayer(creds, video, { vendor, onState, layout, publish }) {
+async function livekitPlayer(creds, video, { vendor, onState, layout, publish, adaptive = true }) {
   const LK = await import(vendor.livekit);
-  const room = new LK.Room({ adaptiveStream: true, dynacast: true, stopLocalTrackOnUnpublish: true });
+  // adaptive: false for small previews (the feed) so the picture is never paused.
+  const room = new LK.Room({ adaptiveStream: adaptive !== false, dynacast: true, stopLocalTrackOnUnpublish: true });
   const unwatch = watchVideo(video, onState);
   const audioEls = new Map(); // track sid -> element
   let audioOn = !video.muted;
