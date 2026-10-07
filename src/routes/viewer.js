@@ -121,7 +121,11 @@ export function registerViewerRoutes(router, { trustProxy }) {
   // GET /apps/live/status  (via App Proxy, same origin as the storefront)
   router.get('/proxy/status', (req, res, params, url) => {
     if (!verifyAppProxy(url.searchParams) && !(!config.isProd && process.env.DEV_ALLOW_UNSIGNED === '1')) throw new HttpError(401, 'invalid_proxy_signature');
-    sendJson(res, 200, svc.liveStatus(), { 'Cache-Control': 'no-store' });
+    // The old homepage banner (theme section, asks without ?t=) opened the live full
+    // screen as soon as you visited the site. Lives are shown as a post in the
+    // feed instead, so that banner is told nothing is live.
+    const fromFeed = url.searchParams.has('t') || url.searchParams.has('feed');
+    sendJson(res, 200, fromFeed ? svc.liveStatus() : { live: false }, { 'Cache-Control': 'no-store' });
   });
   router.get('/proxy', (req, res, params, url) => handleProxy(req, res, {}, url));
   router.get('/proxy/:liveId', (req, res, params, url) => handleProxy(req, res, params, url));
