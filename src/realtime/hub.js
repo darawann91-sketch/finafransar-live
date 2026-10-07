@@ -148,6 +148,11 @@ export class Hub {
     this.broadcast(liveId, msg, { filter: (c) => c.role !== 'viewer' });
   }
 
+  hostCount(liveId) {
+    const r = this.rooms.get(liveId);
+    return r ? [...r.conns].filter((c) => c.role !== 'viewer').length : 0;
+  }
+
   connsForSub(liveId, sub) {
     const r = this.rooms.get(liveId);
     return r ? [...r.conns].filter((c) => c.sub === sub) : [];
