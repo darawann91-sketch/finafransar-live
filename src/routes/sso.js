@@ -5,6 +5,7 @@
 import { config } from '../config.js';
 import { Hosts, Lives } from '../db.js';
 import { streaming } from '../streaming/index.js';
+import * as svc from '../services/lives.js';
 import { randomId } from '../lib/crypto.js';
 import { hashPassword, randomToken } from '../lib/crypto.js';
 import { readJson, sendJson, HttpError, clientIp } from '../lib/http.js';
@@ -56,5 +57,13 @@ export function registerSsoRoutes(router, { trustProxy }) {
     if (!live || live.status !== 'live') throw new HttpError(404, 'not_live');
     const identity = `feed.${randomId(8)}`;
     sendJson(res, 200, { ...streaming.viewerCredentials(live, { identity, name: 'Flödet' }, { guest: true }), identity }, { 'Cache-Control': 'no-store' });
+  });
+  // Who just came into the live + viewer count, for the live post in the feed.
+  router.get('/api/stream/joins/:liveId', (req, res, { liveId }, url) => {
+    const live = Lives.get(String(liveId));
+    if (!live || live.status !== 'live') return sendJson(res, 200, { live: false }, { 'Cache-Control': 'no-store' });
+    const since = Number(url.searchParams.get('since')) || 0;
+    const st = svc.liveStatus();
+    sendJson(res, 200, { live: true, viewers: st.id === live.id ? st.viewers : 0, joins: svc.recentJoins(live.id, since), now: Date.now() }, { 'Cache-Control': 'no-store' });
   });
 }
