@@ -538,6 +538,7 @@ async function applyDeal() {
 // chat
 // ---------------------------------------------------------------------------
 function msgEl(m) {
+  if (m.system) return h('div', { class: 'msg sys', dataset: { id: m.id } }, h('b', {}, m.name), ' ', m.text);
   const mine = !S.me.guest && m.name === S.me.name && m.role === 'viewer' && m._mine;
   return h('div', { class: `msg${m.role === 'host' ? ' host' : ''}${mine ? ' mine' : ''}`, dataset: { id: m.id }, onclick: (e) => msgMenu(e, m) },
     m.role === 'host' ? h('span', { class: 'tag' }, 'HOST') : null,
@@ -998,6 +999,10 @@ function connect() {
       pendingMine.splice(i, 1);
     }
     addMessages([m.m]);
+  });
+  socket.on('joined', (m) => {
+    if (!m.name || m.name === S.me?.name) return;
+    addMessages([{ id: `j${Date.now()}${Math.random()}`, name: m.name, text: 'gick med 👋', system: true }]);
   });
   socket.on('chat_del', (m) => {
     for (const id of m.ids) document.querySelector(`.msg[data-id="${id}"]`)?.remove();
