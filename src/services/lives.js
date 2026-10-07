@@ -149,6 +149,7 @@ export async function onJoin(conn) {
   } else {
     // host/admin websocket: must own the live (admins may join any)
     if (conn.role !== 'admin' && live.host_id !== conn.hostId) return false;
+    clearTimeout(hostGone.get(live.id)); hostGone.delete(live.id);
   }
   await liveProducts(live.id);
   return true;
@@ -176,7 +177,24 @@ export function recentJoins(liveId, since = 0) {
   return (joinLog.get(liveId) || []).filter((j) => j.at > since);
 }
 
+// The host closed the app / lost the phone without pressing "Avsluta": end the
+// live when no host has been connected for a while, so it doesn't stay in the feed.
+export const HOST_GONE_MS = 2 * 60e3;
+const hostGone = new Map(); // liveId -> timer
+function watchHostGone(liveId) {
+  clearTimeout(hostGone.get(liveId));
+  const t = setTimeout(() => {
+    hostGone.delete(liveId);
+    if (hub.hostCount(liveId) > 0) return;
+    const live = Lives.get(liveId);
+    if (live && live.status === 'live') endLive(live).catch((e) => console.error('auto end', e.message));
+  }, HOST_GONE_MS);
+  t.unref?.();
+  hostGone.set(liveId, t);
+}
+
 export function onLeave(conn) {
+  if (conn.role !== 'viewer' && hub.hostCount(conn.liveId) === 0) watchHostGone(conn.liveId);
   if (conn.sessionId) ViewerSessions.close(conn.sessionId);
   // A guest on stage who closed the app: drop them if they don't come back.
   const g = conn.role === 'viewer' ? stages.get(conn.liveId)?.guests.get(conn.sub) : null;
